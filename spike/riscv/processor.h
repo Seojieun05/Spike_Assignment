@@ -271,6 +271,10 @@ static int cto(reg_t val)
     val >>= 1, res++;
   return res;
 }
+struct hist_insn_t{ //modify
+  bool valid = false;
+  insn_t insn{};
+};
 
 // this class represents one processor in a RISC-V machine.
 class processor_t : public abstract_device_t
@@ -280,7 +284,19 @@ public:
               simif_t* sim, uint32_t id, bool halt_on_reset,
               FILE *log_file, std::ostream& sout_); // because of command line option --log and -s we need both
   ~processor_t();
-
+  
+  void add_cycles(uint64_t n){ cycles += n;} //modify
+  uint64_t return_cycles() const {return cycles;} //modify
+  
+  void change_in_main(bool v){in_main = v;} //modify
+  bool return_in_main() const {return in_main;} //modify
+  
+  void reset_cycle_model(); //modify
+  void update_cycle_model(reg_t pc, insn_t insn, reg_t npc);
+  uint64_t return_total_cycles(){ 
+    if(main_inst_count == 0) return 0;
+    return main_inst_count + stall_count + cycles + 4;
+  }
   void set_debug(bool value);
   void set_histogram(bool value);
 #ifdef RISCV_ENABLE_COMMITLOG
@@ -479,6 +495,11 @@ private:
 
   static const size_t OPCODE_CACHE_SIZE = 8191;
   insn_desc_t opcode_cache[OPCODE_CACHE_SIZE];
+  hist_insn_t hist[2]; //modify
+  uint64_t cycles = 0; //modify
+  bool in_main = false; //modify
+  uint64_t main_inst_count = 0; //modify
+  uint64_t stall_count = 0; //modify
 
   void take_pending_interrupt() { take_interrupt(state.mip->read() & state.mie->read()); }
   void take_interrupt(reg_t mask); // take first enabled interrupt in mask

@@ -5,6 +5,8 @@
 #include "disasm.h"
 #include <cassert>
 
+int inst_n;
+
 #ifdef RISCV_ENABLE_COMMITLOG
 static void commit_log_reset(processor_t* p)
 {
@@ -178,6 +180,24 @@ static inline reg_t execute_insn(processor_t* p, reg_t pc, insn_fetch_t fetch)
 
   try {
     npc = fetch.func(p, fetch.insn, pc);
+   
+    bool this_in_main = p->return_in_main(); //modify
+
+    if (this_in_main) {
+        p->update_cycle_model(pc, fetch.insn, npc);
+        inst_n++;
+    }
+
+    if (!this_in_main && pc == 0x0000000000010178) {
+        p->change_in_main(true);
+    }
+    else if (this_in_main && pc == 0x000000000001017c) {
+        p->change_in_main(false);
+	uint64_t cy = p->return_total_cycles();
+	printf("%lu\n", cy);
+	printf("%d\n", inst_n);
+    }
+
     if (npc != PC_SERIALIZE_BEFORE) {
 
 #ifdef RISCV_ENABLE_COMMITLOG
@@ -301,6 +321,10 @@ void processor_t::step(size_t n)
     }
     catch(trap_t& t)
     {
+      reg_t cause = t.cause();
+      if (return_in_main() && cause == CAUSE_USER_ECALL) {
+          add_cycles(1);
+      }
       take_trap(t, pc);
       n = instret;
 

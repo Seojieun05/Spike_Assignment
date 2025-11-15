@@ -647,6 +647,12 @@ void processor_t::enable_log_commits()
 void processor_t::reset()
 {
   xlen = max_xlen;
+  hist[0] = hist_insn_t{};//modify
+  hist[1] = hist_insn_t{};
+  cycles = 0; //modify
+  in_main = false; //modify
+  stall_count = 0;
+  main_inst_count = 0;
   state.reset(this, max_isa);
   state.dcsr->halt = halt_on_reset;
   halt_on_reset = false;
@@ -947,6 +953,58 @@ void processor_t::take_trap(trap_t& t, reg_t epc)
     state.mstatus->write(s);
     set_privilege(PRV_M);
   }
+}
+
+
+static inline uint32_t get_opcode(insn_t& insn) { return insn.bits() & 0x7f;}
+static inline uint32_t get_rd(insn_t& insn) { return (insn.bits() >> 7) & 0x1f; }
+static inline uint32_t get_rs1(insn_t& insn) { return (insn.bits() >> 15) & 0x1f; }
+static inline uint32_t get_rs2(insn_t& insn) { return (insn.bits() >> 20) & 0x1f; }
+
+static inline bool is_load_insn(insn_t& insn) { return get_opcode(insn) == 0x03; }
+static inline bool is_branch_insn(insn_t& insn) { return get_opcode(insn) == 0x63; }
+static inline bool is_rtype_insn(insn_t& insn) { return get_opcode(insn) == 0x33; }
+static inline bool is_jal_insn(insn_t& insn) { 
+    return get_opcode(insn) == 0x6f || get_opcode(insn) == 0x67; }
+static inline bool cur_uses_reg(insn_t& insn, uint32_t reg) {
+    uint32_t r1 = (uint32_t)insn.rs1();
+    uint32_t r2 = (uint32_t)insn.rs2();
+    if (reg == 0) return false;
+    return r1 == reg || r2 == reg;
+}
+
+void processor_t::update_cycle_model(reg_t pc, insn_t insn, reg_t npc)
+{
+  int stall = 0;
+  if (hist[0].valid && is_load_insn(hist[0].insn)) {
+    uint32_t prev_rd = get_rd(hist[0].insn);
+
+    if (prev_rd != 0 && cur_uses_reg(insn, prev_rd)) {
+      stall += 2;
+    }
+  }
+
+  if (stall == 0 && hist[1].valid && is_load_insn(hist[1].insn)) {
+    uint32_t rd1 = get_rd(hist[1].insn);
+    if (rd1 != 0 && (is_branch_insn(insn) || is_jal_insn(insn))) {
+      if(hist[0].valid && !cur_uses_reg(hist[0].insn, rd1)){
+        stall += 1;
+      }
+    }
+  }
+
+  if (is_branch_insn(insn)) {
+    if (npc != pc + 4) {
+      stall += 1;
+    }
+  }
+
+  main_inst_count += 1;
+  stall_count += stall;
+
+  hist[1] = hist[0];
+  hist[0].valid = true;
+  hist[0].insn  = insn;
 }
 
 void processor_t::disasm(insn_t insn)
